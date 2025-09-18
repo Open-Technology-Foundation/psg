@@ -1,0 +1,392 @@
+#!/usr/bin/env bash
+# psg - Enhanced Process Search Utility
+set -euo pipefail
+
+declare -- VERSION='2.0.0' PRG=${0##*/}
+readonly -- VERSION PRG
+
+# Color definitions for terminal output
+#shellcheck disable=SC2015
+[[ -t 1 ]] && declare -- RED=$'\033[0;31m' YELLOW=$'\033[0;33m' NC=$'\033[0m' || declare -- RED='' YELLOW='' NC=''
+readonly -- RED YELLOW NC
+
+# Command paths to avoid aliases
+declare -- PS='/usr/bin/ps'
+declare -- GREP='/usr/bin/grep'
+declare -- HEAD='/usr/bin/head'
+declare -- SORT='/usr/bin/sort'
+declare -- SED='/usr/bin/sed'
+declare -- AWK='/usr/bin/awk'
+declare -- CUT='/usr/bin/cut'
+readonly -- PS GREP HEAD SORT SED AWK CUT
+
+readonly -a VALID_PS_FIELDS=( pcpu pmem group ppid user args comm rgroup nice pid pgid etime ruser time tty vsz rss stat )
+readonly -A NUMERIC_FIELDS=( [pcpu]=1 [pmem]=1 [pid]=1 [ppid]=1 [pgid]=1 [nice]=1 [vsz]=1 [rss]=1 )
+
+# --------------------------------------------------------------------------------
+# Utility Functions
+# --------------------------------------------------------------------------------
+
+declare -i VERBOSE=1
+
+# Core message function using FUNCNAME for context
+_msg() {
+  local -- status="${FUNCNAME[1]}" prefix="$PRG:" msg
+  case "$status" in
+    warn)    prefix+=" ${YELLOW}⚡${NC}" ;;
+    error)   prefix+=" ${RED}✗${NC}" ;;
+    *)       ;;
+  esac
+  for msg in "$@"; do printf '%s %s\n' "$prefix" "$msg"; done
+}
+# Conditional output based on verbosity
+warn() { ((VERBOSE)) || return 0; >&2 _msg "$@"; }
+# Unconditional output
+error() { >&2 _msg "$@"; }
+die() { (($# > 1)) && error "${@:2}"; exit "${1:-0}"; }
+
+# Validate argument presence
+noarg() {
+  (($# < 2)) || [[ ${2:0:1} == '-' ]] && die 2 "Missing argument for option '$1'"
+  return 0
+}
+
+# Debug print variable declaration
+decp() { declare -p "$@" | ${SED} 's/^declare -[a-zA-Z-]* //'; }
+
+# --------------------------------------------------------------------------------
+# Business Logic Functions
+# --------------------------------------------------------------------------------
+
+# Validate that all requested fields are valid ps fields
+validate_fields() {
+  local -- fields="$1"
+  local -- field_type="${2:-display}"
+  local -a field_array=() invalid_fields=()
+  local -- field valid
+
+  IFS=',' read -ra field_array <<< "$fields"
+  for field in "${field_array[@]}"; do
+    valid=0
+    for valid_field in "${VALID_PS_FIELDS[@]}"; do
+      if [[ "$field" == "$valid_field" ]]; then
+        valid=1
+        break
+      fi
+    done
+    ((valid)) || invalid_fields+=("$field")
+  done
+
+  if ((${#invalid_fields[@]})); then
+    error "Invalid $field_type field(s): ${invalid_fields[*]}"
+    error "Valid fields: ${VALID_PS_FIELDS[*]}"
+    return 1
+  fi
+  return 0
+}
+
+# Helper function to determine sort column and type based on field name
+get_sort_info() {
+  local -- fields="$1"
+  local -- sort_field="$2"
+  local -i column=1
+  local -a field_array=()
+  local -- sort_type='text'
+
+  IFS=',' read -ra field_array <<< "$fields"
+  for i in "${!field_array[@]}"; do
+    if [[ "${field_array[$i]}" == "$sort_field" ]]; then
+      column=$((i+1))
+      # Check if this is a numeric field
+      if [[ -n "${NUMERIC_FIELDS[$sort_field]:-}" ]]; then
+        sort_type='numeric'
+      fi
+      break
+    fi
+  done
+
+  echo "${column}:${sort_type}"
+}
+
+# Usage documentation
+usage() {
+  cat <<EOT
+$PRG $VERSION - Process Search with Grep
+
+An enhanced process search utility that improves upon traditional 'ps | grep' workflows
+with smart filtering, custom fields, and advanced search options.
+
+USAGE: $PRG [OPTIONS] keyword...
+
+SEARCH OPTIONS:
+  -e, --exact         Match exact process name only (uses 'comm' field)
+  -r, --regex         Treat keywords as extended regular expressions
+  -c, --case          Case-sensitive search (default: case-insensitive)
+  keyword...          Process names/patterns to search for (multiple allowed)
+
+DISPLAY OPTIONS:
+  -f, --fields LIST   Comma-separated list of fields to display
+                      Default: $(decp outputflds)
+  -s, --sort FIELD    Sort results by specified field
+                      Default: $(decp sortfield)
+  -v, --verbose       Show header line (default)
+  -q, --quiet         Hide header line
+  -n, --no-color      Disable colored output
+
+ADVANCED OPTIONS:
+  -- PSOPTS...        Pass remaining options directly to 'ps' command
+  -h, --help          Show this help message
+
+AVAILABLE FIELDS:
+  Process Info:  pid ppid pgid tty
+  User Info:     user ruser group rgroup
+  Performance:   pcpu pmem nice vsz rss
+  Time Info:     etime time
+  Command Info:  comm args
+  State Info:    stat
+
+EXAMPLES:
+  Basic Search:
+    $PRG bash                      # Find all bash processes
+    $PRG bash python              # Find bash OR python processes
+
+  Exact Matching:
+    $PRG -e nginx                  # Find exactly 'nginx' (not '/usr/sbin/nginx')
+    $PRG -e bash                   # Find 'bash' but not 'bash.sh' or '/bin/bash'
+
+  Custom Fields:
+    $PRG -f pid,user,pcpu,args chrome      # Show specific fields
+    $PRG -f pid,comm systemd               # Minimal display
+    $PRG -f pid,pcpu,pmem,vsz,rss java     # Memory details
+
+  Sorting:
+    $PRG -s pcpu                   # Sort all processes by CPU usage
+    $PRG -s pmem firefox           # Sort Firefox processes by memory
+    $PRG -s etime -f pid,etime,args       # Sort by elapsed time
+
+  Advanced:
+    $PRG -r 'python[23]'           # Regex: find python2 or python3
+    $PRG -r '^/usr/bin'            # Regex: processes in /usr/bin
+    $PRG -c Docker                 # Case-sensitive search
+    $PRG -qf pid nginx | xargs kill       # Get PIDs for killing
+    $PRG -- -u root apache         # Pass -u root to ps
+
+NOTES:
+  - PSG automatically filters out itself from results using PID-based filtering
+  - Exact match (-e) compares against the 'comm' field (program name only)
+  - Regular expressions use extended regex syntax (ERE)
+  - Multiple keywords are OR'd together (matches any of them)
+  - Color highlighting is automatic when output is to terminal
+
+Version $VERSION - https://github.com/yourusername/psg
+EOT
+  exit "${1:-0}"
+}
+
+# Main function
+main() {
+  local -- outputflds='pid,user,pcpu,pmem,etime,args'
+  local -- sortfield=pid
+  local -- results='' search='' grep_pattern='' color_opt='' grep_case=''
+  local -a args=() psargs=()
+  local -i case_sensitive=0 exact_match=0 use_color=1 use_regex=0
+  local -i added_pid=0 added_comm=0
+  local -- internal_fields='' display_fields=''
+
+  # Parse arguments
+  while (($#)); do case "$1" in
+    -f|--fields)    noarg "$@"; shift; outputflds="$1" ;;
+    -v|--verbose)   VERBOSE=1 ;;
+    -q|--quiet)     VERBOSE=0 ;;
+    -c|--case)      case_sensitive=1 ;;
+    -e|--exact)     exact_match=1 ;;
+    -s|--sort)      noarg "$@"; shift; sortfield="$1" ;;
+    -n|--no-color)  use_color=0 ;;
+    -r|--regex)     use_regex=1 ;;
+    -h|--help)      usage 0 ;;
+    # Handle combined short options
+    -[fvqcesnrh]*) #shellcheck disable=SC2046
+                    set -- '' $(printf -- "-%c " $(${GREP} -o . <<<"${1:1}")) "${@:2}" ;;
+    --)             shift; psargs+=( "$@" ); break ;;
+    -*)             die 22 "Invalid option '$1'" ;;
+    *)              args+=( "$1" ) ;;
+  esac; shift; done
+
+  # Validate arguments
+  ((${#args[@]})) || usage 1
+
+  # Validate fields
+  validate_fields "$outputflds" 'display' || die 2
+  validate_fields "$sortfield" 'sort' || die 2
+
+  # Save original fields for display
+  display_fields="$outputflds"
+  internal_fields="$outputflds"
+
+  # We always need pid for filtering - prepend if not present
+  if [[ ",$internal_fields," != *",pid,"* ]]; then
+    internal_fields="pid,$internal_fields"
+    added_pid=1
+  fi
+
+  # For exact match, we need comm field - prepend if not present
+  if ((exact_match)) && [[ ",$internal_fields," != *",comm,"* ]]; then
+    # Add comm after pid (if pid was added) or at the beginning
+    if ((added_pid)); then
+      internal_fields="pid,comm,${display_fields}"
+    else
+      # pid is already in display_fields, just add comm
+      internal_fields="comm,$internal_fields"
+    fi
+    added_comm=1
+  fi
+
+  # Check that sort field is in the display fields
+  local -- found_sort=0
+  local -a field_array=()
+  IFS=',' read -ra field_array <<< "$display_fields"
+  for field in "${field_array[@]}"; do
+    if [[ "$field" == "$sortfield" ]]; then
+      found_sort=1
+      break
+    fi
+  done
+  ((found_sort)) || die 2 "Sort field '$sortfield' must be in display fields"
+
+  # Set color options
+  if ((use_color)); then
+    color_opt='--color=auto'
+  else
+    color_opt='--color=never'
+  fi
+
+  # Set case sensitivity options
+  if ((case_sensitive)); then
+    grep_case=''
+  else
+    grep_case='-i'
+  fi
+
+  # Get sort information (using internal fields for column calculation)
+  local -- sort_info sort_column sort_flags
+  sort_info=$(get_sort_info "$internal_fields" "$sortfield")
+  sort_column="${sort_info%%:*}"
+  if [[ "${sort_info##*:}" == 'numeric' ]]; then
+    sort_flags='-g'
+  else
+    sort_flags=''
+  fi
+
+  # Get current process PIDs for filtering
+  local -- self_pid="$$"
+  local -- parent_pid="$PPID"
+
+  # Capture header if verbose mode is enabled (will print later if results found)
+  local -i header_printed=0
+  local -- header_line=''
+  if ((VERBOSE)); then
+    header_line=$(${PS} -e -o "$display_fields" "${psargs[@]}" | ${HEAD} -n 1)
+  fi
+
+  # Process each search term
+  for search in "${args[@]}"; do
+    [[ -n $search ]] || { warn 'Empty search term'; continue; }
+
+    # Build grep pattern based on search mode
+    if ((exact_match)); then
+      # For exact match, we'll use comm field
+      # Find comm column position (1-indexed)
+      local -i comm_col=0
+      local -a int_fields=()
+      IFS=',' read -ra int_fields <<< "$internal_fields"
+      for i in "${!int_fields[@]}"; do
+        if [[ "${int_fields[$i]}" == 'comm' ]]; then
+          comm_col=$((i+1))
+          break
+        fi
+      done
+    elif ((use_regex)); then
+      # Use regex pattern as-is
+      grep_pattern="$search"
+    else
+      # Default substring search with first character in brackets to avoid matching grep itself
+      grep_pattern="[${search:0:1}]${search:1}"
+    fi
+
+    # Execute the search with improved filtering
+    # Find the PID column position (it may not be column 1)
+    local -i pid_col=1
+    local -a field_list=()
+    IFS=',' read -ra field_list <<< "$internal_fields"
+    for i in "${!field_list[@]}"; do
+      if [[ "${field_list[$i]}" == 'pid' ]]; then
+        pid_col=$((i+1))
+        break
+      fi
+    done
+
+    if ((exact_match)); then
+      # For exact match, filter by PID and comm field
+      # Build AWK program with dynamic column references
+      local -- awk_prog='NR==1 {next} {'
+      awk_prog+="pid_val=\$${pid_col}; "
+      awk_prog+="comm_val=\$${comm_col}; "
+      awk_prog+='if (pid_val != self && pid_val != parent && comm_val == search) print}'
+
+      results=$(${PS} -e -o "$internal_fields" "${psargs[@]}" |
+                ${AWK} -v self="$self_pid" -v parent="$parent_pid" -v search="$search" "$awk_prog" |
+                ${GREP} -v '\./psg\|/psg ' |
+                ${SORT} -k "$sort_column" $sort_flags) || true
+    else
+      # Filter by PID, then grep for pattern
+      local -- awk_prog='NR==1 {next} {'
+      awk_prog+="pid_val=\$${pid_col}; "
+      awk_prog+='if (pid_val != self && pid_val != parent) print}'
+
+      results=$(${PS} -e -o "$internal_fields" "${psargs[@]}" |
+                ${AWK} -v self="$self_pid" -v parent="$parent_pid" "$awk_prog" |
+                ${GREP} $grep_case $color_opt -E "$grep_pattern" |
+                ${GREP} -v '\./psg\|/psg ' |
+                ${SORT} -k "$sort_column" $sort_flags) || true
+    fi
+
+    # Remove internally added columns if needed
+    # We need to handle ps output format which uses multiple spaces for alignment
+    if ((added_pid || added_comm)); then
+      # Calculate how many columns to skip from the beginning
+      local -i skip_cols=0
+      ((added_pid)) && ((skip_cols+=1))
+      ((added_comm)) && ((skip_cols+=1))
+
+      # Use sed to remove the first N fields while preserving formatting
+      if [[ -n "$results" ]]; then
+        # Skip columns by removing fields at the beginning of each line
+        local -- sed_cmd=''
+        for ((i=1; i<=skip_cols; i++)); do
+          sed_cmd+='s/^[[:space:]]*[^[:space:]]\+[[:space:]]*// ;'
+        done
+        results=$(echo "$results" | ${SED} "$sed_cmd") || true
+      fi
+    fi
+
+    if [[ -z "$results" ]]; then
+      warn "[$search] not found"
+      continue
+    fi
+
+    # Print header before first result
+    if ((VERBOSE && !header_printed)); then
+      echo "$header_line"
+      header_printed=1
+    fi
+
+    echo "$results"
+  done
+
+  return 0
+}
+
+# Script invocation
+main "$@"
+
+#fin

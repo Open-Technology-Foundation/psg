@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Bash completion for psg - Enhanced Process Search Utility
+
+_psg() {
+    local cur prev opts fields
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Available options
+    opts="-f --fields -v --verbose -q --quiet -c --case -e --exact -s --sort -n --no-color -r --regex -h --help --"
+
+    # Available field names for -f/--fields and -s/--sort
+    fields="pcpu pmem group ppid user args comm rgroup nice pid pgid etime ruser time tty vsz rss stat"
+
+    case $prev in
+        -f|--fields)
+            # Complete field names, allowing comma-separated lists
+            if [[ $cur == *,* ]]; then
+                # Handle comma-separated completion
+                local prefix="${cur%,*},"
+                local suffix="${cur##*,}"
+                local field_options
+                field_options=$(compgen -W "$fields" -- "$suffix")
+                COMPREPLY=()
+                while IFS= read -r field; do
+                    COMPREPLY+=("$prefix$field")
+                done <<< "$field_options"
+            else
+                COMPREPLY=($(compgen -W "$fields" -- "$cur"))
+            fi
+            return 0
+            ;;
+        -s|--sort)
+            # Complete field names for sorting
+            COMPREPLY=($(compgen -W "$fields" -- "$cur"))
+            return 0
+            ;;
+        --)
+            # After --, complete with ps options
+            COMPREPLY=($(compgen -W "-A -a -d -e -f -g -G -H -j -L -l -M -N -o -O -p -P -s -S -t -T -u -U -w -x -Z" -- "$cur"))
+            return 0
+            ;;
+    esac
+
+    # Handle options starting with dash
+    if [[ $cur == -* ]]; then
+        COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+        return 0
+    fi
+
+    # For process name completion, use running process names
+    if command -v ps >/dev/null 2>&1; then
+        local processes
+        processes=$(ps -eo comm --no-headers 2>/dev/null | sort -u 2>/dev/null)
+        COMPREPLY=($(compgen -W "$processes" -- "$cur"))
+    fi
+
+    return 0
+}
+
+complete -F _psg psg
