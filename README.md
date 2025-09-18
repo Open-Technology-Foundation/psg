@@ -1,5 +1,8 @@
 # PSG - Process Search with Grep
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![GitHub](https://img.shields.io/github/stars/Open-Technology-Foundation/psg?style=social)](https://github.com/Open-Technology-Foundation/psg)
+
 An enhanced process search utility that improves upon traditional `ps | grep` workflows with advanced filtering, sorting, and display options.
 
 ## Features
@@ -17,13 +20,27 @@ An enhanced process search utility that improves upon traditional `ps | grep` wo
 ## Installation
 
 ### Quick Install
+
+#### From GitHub
 ```bash
+# Clone the repository
+git clone https://github.com/Open-Technology-Foundation/psg.git
+cd psg
+
 # Copy to system path
 sudo cp psg /usr/local/bin/psg
 sudo chmod +x /usr/local/bin/psg
 
 # Install bash completion (optional)
 sudo cp .bash_completion /etc/bash_completion.d/psg
+```
+
+#### Direct Download
+```bash
+# Download directly
+wget https://raw.githubusercontent.com/Open-Technology-Foundation/psg/main/psg
+sudo mv psg /usr/local/bin/psg
+sudo chmod +x /usr/local/bin/psg
 ```
 
 ### Manual Install
@@ -214,10 +231,17 @@ source ~/.bash_completion
 ## Contributing
 
 PSG is actively maintained. For bugs, feature requests, or contributions:
-- Check existing issues
-- Test changes with various process types
+
+- **Repository**: [https://github.com/Open-Technology-Foundation/psg](https://github.com/Open-Technology-Foundation/psg)
+- **Issues**: [https://github.com/Open-Technology-Foundation/psg/issues](https://github.com/Open-Technology-Foundation/psg/issues)
+- **Pull Requests**: [https://github.com/Open-Technology-Foundation/psg/pulls](https://github.com/Open-Technology-Foundation/psg/pulls)
+
+### Development Guidelines
+- Check existing issues before submitting new ones
+- Test changes with various process types and edge cases
 - Follow the Bash coding standards in BASH-CODING-STYLE.md
 - Ensure compatibility with bash 5.2.21+
+- Include examples in commit messages for new features
 
 ## License
 
