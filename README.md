@@ -239,7 +239,7 @@ PSG is actively maintained. For bugs, feature requests, or contributions:
 ### Development Guidelines
 - Check existing issues before submitting new ones
 - Test changes with various process types and edge cases
-- Follow the Bash coding standards in BASH-CODING-STYLE.md
+- Follow the Bash coding standards in BASH-CODING-STANDARD.md
 - Ensure compatibility with bash 5.2.21+
 - Include examples in commit messages for new features
 
