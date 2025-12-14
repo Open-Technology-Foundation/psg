@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # psg - Enhanced Process Search Utility
 set -euo pipefail
+shopt -s inherit_errexit shift_verbose extglob nullglob
 
-declare -- VERSION='2.0.0' PRG=${0##*/}
-readonly -- VERSION PRG
+declare -r VERSION='2.0.0'
+declare -r PRG=${0##*/}
 
 # Color definitions for terminal output
 #shellcheck disable=SC2015
-[[ -t 1 ]] && declare -- RED=$'\033[0;31m' YELLOW=$'\033[0;33m' NC=$'\033[0m' || declare -- RED='' YELLOW='' NC=''
-readonly -- RED YELLOW NC
+[[ -t 1 ]] && declare -r RED=$'\033[0;31m' YELLOW=$'\033[0;33m' NC=$'\033[0m' || declare -r RED='' YELLOW='' NC=''
 
 # Command paths to avoid aliases
 declare -- PS='/usr/bin/ps'
@@ -33,7 +33,7 @@ declare -i VERBOSE=1
 _msg() {
   local -- status="${FUNCNAME[1]}" prefix="$PRG:" msg
   case "$status" in
-    warn)    prefix+=" ${YELLOW}⚡${NC}" ;;
+    warn)    prefix+=" ${YELLOW}▲${NC}" ;;
     error)   prefix+=" ${RED}✗${NC}" ;;
     *)       ;;
   esac
@@ -60,7 +60,7 @@ decp() { declare -p "$@" | ${SED} 's/^declare -[a-zA-Z-]* //'; }
 
 # Validate that all requested fields are valid ps fields
 validate_fields() {
-  local -- fields="$1"
+  local -- fields=$1
   local -- field_type="${2:-display}"
   local -a field_array=() invalid_fields=()
   local -- field valid
@@ -87,8 +87,8 @@ validate_fields() {
 
 # Helper function to determine sort column and type based on field name
 get_sort_info() {
-  local -- fields="$1"
-  local -- sort_field="$2"
+  local -- fields=$1
+  local -- sort_field=$2
   local -i column=1
   local -a field_array=()
   local -- sort_type='text'
@@ -98,9 +98,7 @@ get_sort_info() {
     if [[ "${field_array[$i]}" == "$sort_field" ]]; then
       column=$((i+1))
       # Check if this is a numeric field
-      if [[ -n "${NUMERIC_FIELDS[$sort_field]:-}" ]]; then
-        sort_type='numeric'
-      fi
+      [[ -z "${NUMERIC_FIELDS[$sort_field]:-}" ]] || sort_type='numeric'
       break
     fi
   done
@@ -194,21 +192,21 @@ main() {
   local -- internal_fields='' display_fields=''
 
   # Parse arguments
-  while (($#)); do case "$1" in
-    -f|--fields)    noarg "$@"; shift; outputflds="$1" ;;
+  while (($#)); do case $1 in
+    -f|--fields)    noarg "$@"; shift; outputflds=$1 ;;
     -v|--verbose)   VERBOSE=1 ;;
     -q|--quiet)     VERBOSE=0 ;;
     -c|--case)      case_sensitive=1 ;;
     -e|--exact)     exact_match=1 ;;
-    -s|--sort)      noarg "$@"; shift; sortfield="$1" ;;
+    -s|--sort)      noarg "$@"; shift; sortfield=$1 ;;
     -n|--no-color)  use_color=0 ;;
     -r|--regex)     use_regex=1 ;;
     -h|--help)      usage 0 ;;
     # Handle combined short options
     -[fvqcesnrh]*) #shellcheck disable=SC2046
-                    set -- '' $(printf -- "-%c " $(${GREP} -o . <<<"${1:1}")) "${@:2}" ;;
+                    set -- '' $(printf -- '-%c ' $(${GREP} -o . <<<"${1:1}")) "${@:2}" ;;
     --)             shift; psargs+=( "$@" ); break ;;
-    -*)             die 22 "Invalid option '$1'" ;;
+    -*)             die 22 "Invalid option ${1@Q}" ;;
     *)              args+=( "$1" ) ;;
   esac; shift; done
 
@@ -386,7 +384,5 @@ main() {
   return 0
 }
 
-# Script invocation
 main "$@"
-
 #fin
